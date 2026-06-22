@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Family Groceries</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Quicksand:wght@400;500;600;700&display=swap');
+        body { font-family: 'Quicksand', sans-serif; }
+    </style>
+</head>
+<body class="bg-orange-50 text-slate-800 min-h-screen pb-10">
+    <div id="root"></div>
+
+    <script>
+        // Pure JavaScript React config (No Babel Transformer required!)
+        const e = React.createElement;
+        const { useState, useEffect } = React;
+        const { createClient } = supabase;
+
+        // FIXED: Added missing quotation marks around the values below
+        const supabaseUrl = 'https://ydkclxsrcydoyulveupb.supabase.co'; 
+        const supabaseKey = 'sb_publishable_iYGnVwQpj6pWMSg0hIf34A_HJIGd5lF';
+        const client = createClient(supabaseUrl, supabaseKey);
+
+        function GroceryApp() {
+            const [items, setItems] = useState([]);
+            const [name, setName] = useState('');
+            const [note, setNote] = useState('');
+            const [loading, setLoading] = useState(true);
+
+            const fetchItems = async () => {
+                const { data, error } = await client
+                    .from('groceries')
+                    .select('*')
+                    .order('created_at', { ascending: false });
+                
+                if (error) console.error('Error fetching:', error);
+                else setItems(data || []);
+                setLoading(false);
+            };
+
+            useEffect(() => {
+                fetchItems();
+
+                const channel = client.channel('grocery-changes')
+                    .on('postgres_changes', { event: '*', schema: 'public', table: 'groceries' }, (payload) => {
+                        fetchItems();
+                    })
+                    .subscribe();
+
+                return () => {
+                    client.removeChannel(channel);
+                };
+            }, []);
+
+            const addItem = async (e) => {
+                e.preventDefault();
+                if (!name.trim()) return;
+
+                const { error } = await client
+                    .from('groceries')
+                    .insert([{ name, note, checked: false }]);
+
+                if (error) alert(error.message);
+                else {
+                    setName('');
+                    setNote('');
+                }
+            };
+
+            const toggleChecked = async (id, currentState) => {
+                await client
+                    .from('groceries')
+                    .update({ checked: !currentState })
+                    .eq('id', id);
+            };
+
+            const deleteItem = async (id) => {
+                if(confirm("Remove this item?")) {
+                    await client.from('groceries').delete().eq('id', id);
+                }
+            };
+
+            const pendingItems = items.filter(i => !i.checked);
+            const completedItems = items.filter(i => i.checked);
+
+            if (loading) {
+                return e('div', { className: 'text-center py-20 text-orange-400 font-bold' }, 'Loading Basket...');
+            }
+
+            return e('div', { className: 'max-w-md mx-auto p-4' },
+                // Header
+                e('header', { className: 'py-8 text-center' },
+                    e('h1', { className: 'text-3xl font-bold text-orange-900' }, 'Family Basket'),
+                    e('p', { className: 'text-orange-600 opacity-80' }, 'Shared Grocery List')
+                ),
+                // Form
+                e('form', { onSubmit: addItem, className: 'bg-white rounded-3xl p-6 shadow-sm mb-8 border border-orange-100' },
+                    e('div', { className: 'space-y-4' },
+                        e('div', null,
+                            e('label', { className: 'block text-xs font-bold uppercase tracking-wider text-orange-400 mb-1 ml-1' }, 'Item Name'),
+                            e('input', {
+                                required: true,
+                                type: 'text',
+                                placeholder: 'e.g. Oat Milk',
+                                className: 'w-full px-4 py-3 rounded-2xl bg-orange-50 border-none outline-none focus:ring-2 focus:ring-orange-300',
+                                value: name,
+                                onChange: (evt) => setName(evt.target.value)
+                            })
+                        ),
+                        e('div', null,
+                            e('label', { className: 'block text-xs font-bold uppercase tracking-wider text-orange-400 mb-1 ml-1' }, 'Optional Note'),
+                            e('input', {
+                                type: 'text',
+                                placeholder: 'e.g. 2 cartons',
+                                className: 'w-full px-4 py-3 rounded-2xl bg-orange-50 border-none outline-none focus:ring-2 focus:ring-orange-300',
+                                value: note,
+                                onChange: (evt) => setNote(evt.target.value)
+                            })
+                        ),
+                        e('button', { className: 'w-full bg-orange-500 hover:bg-orange-600 text-white font-bold py-4 rounded-2xl transition-all shadow-lg active:scale-95' }, 'Add to List')
+                    )
+                ),
+                // Lists Content
+                e('div', { className: 'space-y-6' },
+                    // Pending Items
+                    e('section', { className: 'space-y-3' },
+                        pendingItems.map(item => 
+                            e('div', { key: item.id, className: 'flex items-center gap-4 bg-white p-4 rounded-2xl shadow-sm border border-orange-5' },
+                                e('input', {
+                                    type: 'checkbox',
+                                    checked: item.checked,
+                                    onChange: () => toggleChecked(item.id, item.checked),
+                                    className: 'w-6 h-6 rounded-full border-2 border-orange-200 text-orange-500 cursor-pointer'
+                                }),
+                                e('div', { className: 'flex-1 cursor-pointer', onClick: () => toggleChecked(item.id, item.checked) },
+                                    e('h3', { className: 'font-semibold text-slate-700' }, item.name),
+                                    item.note && e('p', { className: 'text-sm text-slate-400' }, item.note)
+                                ),
+                                e('button', { 
+                                    onClick: (evt) => { evt.stopPropagation(); deleteItem(item.id); },
+                                    className: 'p-2 text-slate-300 hover:text-red-400 font-bold'
+                                }, '✕')
+                            )
+                        )
+                    ),
+                    // Completed Section
+                    completedItems.length > 0 && e('section', { className: 'pt-4 space-y-3 border-t border-orange-100' },
+                        e('h2', { className: 'text-xs font-bold uppercase tracking-widest text-orange-300 ml-1' }, 'Completed'),
+                        completedItems.map(item => 
+                            e('div', { key: item.id, className: 'flex items-center gap-4 bg-white/50 p-4 rounded-2xl opacity-60' },
+                                e('input', {
+                                    type: 'checkbox',
+                                    checked: item.checked,
+                                    onChange: () => toggleChecked(item.id, item.checked),
+                                    className: 'w-6 h-6 rounded-full text-orange-400 cursor-pointer'
+                                }),
+                                e('div', { className: 'flex-1 line-through text-slate-500' },
+                                    e('h3', { className: 'font-medium' }, item.name)
+                                ),
+                                e('button', { 
+                                    onClick: (evt) => { evt.stopPropagation(); deleteItem(item.id); },
+                                    className: 'p-2 text-slate-300 hover:text-red-400 font-bold'
+                                }, '✕')
+                            )
+                        )
+                    ),
+                    items.length === 0 && e('div', { className: 'text-center py-10 text-orange-300' }, 'Your basket is empty.')
+                )
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(e(GroceryApp));
+    </script>
+</body>
+</html>
